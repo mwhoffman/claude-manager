@@ -1,4 +1,4 @@
-"""Summarize the Claude Code conversations of a project, newest first."""
+"""Summarize the conversations of a project, newest first."""
 
 import json
 import re

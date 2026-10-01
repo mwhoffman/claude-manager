@@ -1,11 +1,11 @@
-"""Command line interface for claude-manage."""
+"""Command line interface for cmgr."""
 
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from claude_manage import conversations
+from cmgr import conversations
 
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -13,7 +13,7 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 @app.callback()
 def main() -> None:
-  """Tools for managing local Claude Code data."""
+  """Tool for managing local Claude Code projects and conversations."""
 
 
 @app.command(name="conversations")

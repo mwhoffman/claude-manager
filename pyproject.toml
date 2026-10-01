@@ -1,7 +1,7 @@
 [project]
-name = "claude-manage"
+name = "claude-manager"
 version = "0.1.0"
-description = "Tools for managing local Claude Code data."
+description = "Tool for managing local Claude Code projects/conversations."
 authors = [{name = "Matthew W. Hoffman"}]
 requires-python = ">=3.10"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-claude-manage = "claude_manage.cli:app"
+cmgr = "cmgr.cli:app"
 
 [dependency-groups]
 dev = [
@@ -24,3 +24,7 @@ build-backend = "uv_build"
 [tool.uv]
 # Should match the version requirements of uv_build above.
 required-version = ">=0.12,<0.13"
+
+[tool.uv.build-backend]
+# The package is not named after the project.
+module-name = "cmgr"
