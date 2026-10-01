@@ -5,6 +5,8 @@ description = "Tool for managing local Claude Code projects/conversations."
 authors = [{name = "Matthew W. Hoffman"}]
 requires-python = ">=3.10"
 dependencies = [
+  "humanize>=4.16.0",
+  "rich>=15.0.0",
   "typer>=0.27.2",
 ]
 

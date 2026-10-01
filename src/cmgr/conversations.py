@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import humanize
+
 
 CLAUDE_DIR = Path.home() / ".claude"
 
@@ -191,24 +193,6 @@ def shorten(text: str, width: int) -> str:
   return textwrap.shorten(" ".join(text.split()), width=width, placeholder="…")
 
 
-def human_size(size: float) -> str:
-  """Format a size in bytes using binary unit suffixes.
-
-  Args:
-    size: Size in bytes.
-
-  Returns:
-    The size as a short string, e.g. "512B" or "1.9M".
-  """
-  if size < 1024:
-    return f"{size:.0f}B"
-  for unit in ("K", "M"):
-    size /= 1024
-    if size < 1024:
-      return f"{size:.1f}{unit}"
-  return f"{size / 1024:.1f}G"
-
-
 def show(summary: Summary, index: int, total: int, width: int) -> None:
   """Print the summary of a conversation.
 
@@ -232,7 +216,7 @@ def show(summary: Summary, index: int, total: int, width: int) -> None:
   print(
     f"  activity  {len(prompts)} prompts,"
     f" {summary.assistant_turns} assistant messages,"
-    f" {summary.tool_calls} tool calls, {human_size(summary.size)}"
+    f" {summary.tool_calls} tool calls, {humanize.naturalsize(summary.size, gnu=True)}"
   )
   details = [
     d for d in (summary.branch, summary.version and f"v{summary.version}") if d

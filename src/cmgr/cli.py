@@ -1,11 +1,12 @@
 """Command line interface for cmgr."""
 
-from pathlib import Path
+import pathlib
 from typing import Annotated
 
 import typer
 
-from cmgr import conversations
+from cmgr import conversations as conversations_lib
+from cmgr import projects as projects_lib
 
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -16,12 +17,18 @@ def main() -> None:
   """Tool for managing local Claude Code projects and conversations."""
 
 
-@app.command(name="conversations")
-def conversations_command(
+@app.command()
+def conversations(
   project: Annotated[
-    Path,
+    pathlib.Path,
     typer.Argument(metavar="DIR", help="Project directory."),
-  ] = Path(),
+  ] = pathlib.Path(),
 ) -> None:
-  """Summarize the conversations of a project, newest first."""
-  conversations.run(project)
+  """List and summarize the conversations of a given project."""
+  conversations_lib.run(project)
+
+
+@app.command()
+def projects() -> None:
+  """List projects."""
+  projects_lib.run()
