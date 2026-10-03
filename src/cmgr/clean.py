@@ -95,7 +95,7 @@ def run(yes: bool = False, dry_run: bool = False) -> None:
     console.print("Nothing to clean.")
     return
   for kind, group in doomed.items():
-    console.print(kind, style="header")
+    console.print(f"{kind}:", style="header")
     for path in group:
       console.print(path)
     console.print()
