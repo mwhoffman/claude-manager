@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from cmgr import clean as clean_lib
 from cmgr import conversations as conversations_lib
 from cmgr import projects as projects_lib
 
@@ -19,10 +20,7 @@ def main() -> None:
 
 @app.command()
 def conversations(
-  project: Annotated[
-    pathlib.Path,
-    typer.Argument(metavar="DIR", help="Project directory."),
-  ] = pathlib.Path(),
+  project: Annotated[pathlib.Path, typer.Argument()] = pathlib.Path(),
 ) -> None:
   """List and summarize the conversations of a given project."""
   conversations_lib.run(project)
@@ -32,3 +30,18 @@ def conversations(
 def projects() -> None:
   """List projects."""
   projects_lib.run()
+
+
+@app.command()
+def clean(
+  yes: Annotated[
+    bool,
+    typer.Option("--yes", "-y", help="Delete without asking."),
+  ] = False,
+  dry_run: Annotated[
+    bool,
+    typer.Option("--dry-run", "-n", help="Only list what would be deleted."),
+  ] = False,
+) -> None:
+  """Delete state that no longer refers to anything."""
+  clean_lib.run(yes=yes, dry_run=dry_run)

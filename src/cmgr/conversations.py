@@ -1,81 +1,54 @@
 """Summarize the conversations of a project, newest first."""
 
-import json
-import re
-import shutil
+import dataclasses
+import datetime
+import pathlib
 import sys
-import textwrap
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
-from typing import Any
 
 import humanize
+import rich.console
+import rich.text
 
+from cmgr import common
+from cmgr import console as console_lib
 
-CLAUDE_DIR = Path.home() / ".claude"
-
-# Line width used when the width of the terminal cannot be determined.
-DEFAULT_WIDTH = 100
 
 # Maximum number of prompts printed for each conversation.
 MAX_PROMPTS = 6
 
-# A single decoded line of a transcript file.
-Record = dict[str, Any]
 
-
-@dataclass
+@dataclasses.dataclass
 class Summary:
-  """Summary of a single conversation transcript.
+  """Summary of a single conversation.
 
   Attributes:
-    id: Session id, which is also the stem of the transcript's filename.
-    path: Location of the transcript file.
-    size: Size of the transcript file in bytes.
+    conversation: The conversation being summarized.
+    size: Size of the conversation file in bytes.
     start: Time of the first timestamped record.
-    end: Time of the last timestamped record.
+    modified: Time the conversation file was last written to.
     prompts: Text of each prompt typed by the user, in order.
     title: Auto-generated title, if any.
     custom_title: Title set by the user, if any.
     assistant_turns: Number of assistant records in the main conversation.
     tool_calls: Number of tool calls made by the assistant.
-    branch: Git branch the conversation last ran on, if any.
-    version: Claude Code version the conversation last ran with, if any.
   """
 
-  id: str
-  path: Path
+  conversation: common.Conversation
   size: int
-  start: datetime
-  end: datetime
+  start: datetime.datetime
+  modified: datetime.datetime
   prompts: list[str]
   title: str | None = None
   custom_title: str | None = None
   assistant_turns: int = 0
   tool_calls: int = 0
-  branch: str | None = None
-  version: str | None = None
 
 
-def project_dir(path: str | Path) -> Path:
-  """Map a working directory to its transcript directory under ~/.claude.
+def parse_time(value: object) -> datetime.datetime | None:
+  """Parse a conversation timestamp into local time.
 
   Args:
-    path: Working directory of the project.
-
-  Returns:
-    The directory holding the project's transcripts, which may not exist.
-  """
-  encoded = re.sub(r"[^a-zA-Z0-9]", "-", str(Path(path).resolve()))
-  return CLAUDE_DIR / "projects" / encoded
-
-
-def parse_time(value: object) -> datetime | None:
-  """Parse a transcript timestamp into local time.
-
-  Args:
-    value: An ISO 8601 timestamp, as found on a transcript record.
+    value: An ISO 8601 timestamp, as found on a conversation record.
 
   Returns:
     The timestamp in the local timezone, or None if it cannot be parsed.
@@ -83,183 +56,137 @@ def parse_time(value: object) -> datetime | None:
   if not isinstance(value, str):
     return None
   try:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
+    return datetime.datetime.fromisoformat(
+      value.replace("Z", "+00:00")
+    ).astimezone()
   except ValueError:
     return None
 
 
-def prompt_text(record: Record) -> str | None:
-  """Extract the text the user typed from a user record.
+def summarize(conversation: common.Conversation) -> Summary:
+  """Summarize a conversation.
 
   Args:
-    record: A transcript record of type "user".
+    conversation: Conversation to summarize.
 
   Returns:
-    The typed prompt, or None if the record is not a prompt typed by the user
-    (e.g. a tool result or a message injected by the harness).
+    A summary of the conversation. If no record has a timestamp the start
+    time falls back to the file's modification time.
   """
-  if (
-    record.get("isMeta")
-    or record.get("isSidechain")
-    or "toolUseResult" in record
-  ):
-    return None
-  content = record.get("message", {}).get("content")
-  if isinstance(content, list):
-    content = "\n".join(
-      b.get("text", "")
-      for b in content
-      if isinstance(b, dict) and b.get("type") == "text"
-    )
-  if not isinstance(content, str):
-    return None
-  # Drop harness-injected blocks so only the typed prompt remains.
-  content = re.sub(
-    r"<(system-reminder|local-command-\w+)>.*?</\1>",
-    "",
-    content,
-    flags=re.DOTALL,
-  )
-  return content.strip() or None
-
-
-def summarize(path: Path) -> Summary:
-  """Summarize a conversation transcript.
-
-  Args:
-    path: Location of the transcript, a JSONL file with one record per line.
-
-  Returns:
-    A summary of the conversation. If no record has a timestamp the start and
-    end times fall back to the file's modification time.
-  """
-  modified = datetime.fromtimestamp(path.stat().st_mtime).astimezone()
-  start: datetime | None = None
-  end: datetime | None = None
+  modified = conversation.modified()
+  start: datetime.datetime | None = None
   summary = Summary(
-    id=path.stem,
-    path=path,
-    size=path.stat().st_size,
+    conversation=conversation,
+    size=conversation.path.stat().st_size,
     start=modified,
-    end=modified,
+    modified=modified,
     prompts=[],
   )
-  with path.open() as f:
-    for line in f:
-      try:
-        record: Record = json.loads(line)
-      except json.JSONDecodeError:
-        continue
-      kind = record.get("type")
-      if kind == "ai-title":
-        summary.title = record.get("aiTitle")
-      elif kind == "custom-title":
-        summary.custom_title = record.get("customTitle")
-      when = parse_time(record.get("timestamp"))
-      if when:
-        start = start or when
-        end = when
-      if kind == "user":
-        summary.branch = record.get("gitBranch") or summary.branch
-        summary.version = record.get("version") or summary.version
-        text = prompt_text(record)
-        if text:
-          summary.prompts.append(text)
-      elif kind == "assistant" and not record.get("isSidechain"):
-        summary.assistant_turns += 1
-        content = record.get("message", {}).get("content")
-        if isinstance(content, list):
-          summary.tool_calls += sum(
-            1
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "tool_use"
-          )
-  if start and end:
+  for record in conversation.records():
+    kind = record.get("type")
+    if kind == "ai-title":
+      summary.title = record.get("aiTitle")
+    elif kind == "custom-title":
+      summary.custom_title = record.get("customTitle")
+    start = start or parse_time(record.get("timestamp"))
+    if kind == "user":
+      text = common.prompt_text(record)
+      if text:
+        summary.prompts.append(text)
+    elif kind == "assistant" and not record.get("isSidechain"):
+      summary.assistant_turns += 1
+      content = record.get("message", {}).get("content")
+      if isinstance(content, list):
+        summary.tool_calls += sum(
+          1
+          for b in content
+          if isinstance(b, dict) and b.get("type") == "tool_use"
+        )
+  if start:
     summary.start = start
-    summary.end = end
   return summary
 
 
-def shorten(text: str, width: int) -> str:
-  """Collapse text onto a single line of limited width.
-
-  Args:
-    text: Text to shorten, which may span multiple lines.
-    width: Maximum length of the result.
-
-  Returns:
-    The text with whitespace collapsed, truncated with an ellipsis if needed.
-  """
-  return textwrap.shorten(" ".join(text.split()), width=width, placeholder="…")
-
-
-def show(summary: Summary, index: int, total: int, width: int) -> None:
+def show(
+  console: rich.console.Console,
+  summary: Summary,
+  index: int,
+  total: int,
+) -> None:
   """Print the summary of a conversation.
 
   Args:
+    console: Console to print to.
     summary: Summary to print.
     index: Position of the conversation among those being shown, from 1.
     total: Number of conversations being shown.
-    width: Line width used when truncating prompts.
   """
-  fmt = "%Y-%m-%d %H:%M"
   title = summary.custom_title or summary.title or "(untitled)"
-  minutes = int((summary.end - summary.start).total_seconds() // 60)
+  size = humanize.naturalsize(summary.size, gnu=True)
   prompts = summary.prompts
 
-  print(f"[{index}/{total}] {title}")
-  print(f"  id        {summary.id}")
-  print(
-    f"  when      {summary.start.strftime(fmt)} → {summary.end.strftime(fmt)}"
-    f"  ({minutes // 60}h{minutes % 60:02d}m)"
+  def show_field(key: str, *value: str | tuple[str, str]) -> None:
+    separator = " " if value else ""
+    console.print(
+      rich.text.Text.assemble((f"{key}:", "key"), separator, *value)
+    )
+
+  def show_prompt(text: str) -> None:
+    # Collapse the prompt onto one line, cut to the width of the terminal.
+    console.print(
+      f" - {' '.join(text.split())}",
+      soft_wrap=False,
+      no_wrap=True,
+      overflow="ellipsis",
+    )
+
+  console.print(
+    rich.text.Text.assemble(
+      (title, "header"), " ", (f"[{index}/{total}]", "dim")
+    )
   )
-  print(
-    f"  activity  {len(prompts)} prompts,"
-    f" {summary.assistant_turns} assistant messages,"
-    f" {summary.tool_calls} tool calls, {humanize.naturalsize(summary.size, gnu=True)}"
+  show_field("id", summary.conversation.id)
+  show_field(
+    "time",
+    f"{humanize.naturaltime(summary.modified)} ",
+    (f"(started {humanize.naturaltime(summary.start)})", "dim"),
   )
-  details = [
-    d for d in (summary.branch, summary.version and f"v{summary.version}") if d
-  ]
-  if details:
-    print(f"  context   {', '.join(details)}")
+  details = (
+    f"({summary.assistant_turns} assistant messages,"
+    f" {summary.tool_calls} tool calls, {size})"
+  )
+  show_field("activity", f"{len(prompts)} prompts ", (details, "dim"))
   if prompts:
-    print("  prompts")
+    show_field("prompts")
     # When there are too many prompts show the first few and the last one.
     shown = (
       prompts if len(prompts) <= MAX_PROMPTS else prompts[: MAX_PROMPTS - 1]
     )
     for text in shown:
-      print(f"    - {shorten(text, width - 6)}")
+      show_prompt(text)
     if len(shown) < len(prompts):
       skipped = len(prompts) - len(shown) - 1
       if skipped:
-        print(f"      … {skipped} more …")
-      print(f"    - {shorten(prompts[-1], width - 6)}")
+        console.print(f"   … {skipped} more …")
+      show_prompt(prompts[-1])
 
 
-def run(project: str | Path = ".") -> None:
+def run(path: pathlib.Path) -> None:
   """Print a summary of each conversation of a project.
 
   Args:
-    project: Working directory of the project.
+    path: Working directory of the project.
   """
-  directory = project_dir(project)
-  if not directory.is_dir():
-    sys.exit(
-      "No Claude Code conversations found for"
-      f" {Path(project).resolve()} ({directory})"
-    )
-
+  project = common.Project(path.resolve())
   summaries = sorted(
-    (summarize(p) for p in directory.glob("*.jsonl")),
-    key=lambda s: s.end,
+    (summarize(c) for c in project.conversations() if not c.is_empty()),
+    key=lambda s: s.modified,
     reverse=True,
   )
   if not summaries:
-    sys.exit(f"No conversations in {directory}")
+    sys.exit(f"No Claude Code conversations found for {project.path}")
 
-  width = shutil.get_terminal_size(fallback=(DEFAULT_WIDTH, 24)).columns
+  console = console_lib.make_console()
   for index, summary in enumerate(summaries, 1):
-    show(summary, index, len(summaries), width)
-    print()
+    show(console, summary, index, len(summaries))
+    console.print()
